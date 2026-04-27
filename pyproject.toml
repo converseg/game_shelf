@@ -1,0 +1,13 @@
+[project]
+name = "game-shelf"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "langgraph>=1.1.9",
+    "pydantic>=2.13.3",
+    "requests>=2.33.1",
+    "ruff>=0.15.11",
+    "tqdm>=4.67.3",
+]
