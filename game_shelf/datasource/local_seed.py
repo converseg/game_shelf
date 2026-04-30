@@ -24,19 +24,44 @@ class LocalSeedDataSource:
                 continue
             self._by_name[_norm(name)] = item
 
-    def lookup_by_name(self, name: str) -> GameDetails | None:
+    def lookup_by_name(self, name: str, limit: int = 5) -> list[GameDetails]:
+        key = _norm(name)
+        if not key:
+            return []
+
+        exact = self._by_name.get(key)
+        results: list[GameDetails] = []
+        if exact is not None:
+            results.append(GameDetails.model_validate(exact))
+
+        keys = list(self._by_name.keys())
+        matches = get_close_matches(key, keys, n=limit, cutoff=0.6)
+        for m in matches:
+            if m == key:
+                continue
+            item = self._by_name.get(m)
+            if item is None:
+                continue
+            results.append(GameDetails.model_validate(item))
+
+        return results[:limit]
+
+    def lookup_best(self, name: str) -> GameDetails | None:
         key = _norm(name)
         if not key:
             return None
 
         exact = self._by_name.get(key)
         if exact is not None:
-            return GameDetails.from_dict(exact)
+            return GameDetails.model_validate(exact)
 
         matches = get_close_matches(key, list(self._by_name.keys()), n=1, cutoff=0.82)
         if not matches:
             return None
-        return GameDetails.from_dict(self._by_name[matches[0]])
+        item = self._by_name.get(matches[0])
+        if item is None:
+            return None
+        return GameDetails.model_validate(item)
 
     def suggest(self, name: str, limit: int = 5) -> list[str]:
         key = _norm(name)

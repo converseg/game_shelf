@@ -92,6 +92,21 @@
     },
     {
       "source": "local_seed",
+      "source_id": "13736",
+      "name": "Ticket to Ride",
+      "year_published": 2003,
+      "min_players": 2,
+      "max_players": 5,
+      "min_playtime_minutes": 40,
+      "max_playtime_minutes": 60,
+      "description": "Collect train cards to claim routes across the United States, complete tickets, and build stations for flexibility.",
+      "categories": ["Trains", "Family"],
+      "mechanics": ["Set Collection", "Route Building", "Hand Management"],
+      "themes": ["Trains", "Travel"],
+      "weight": 1.9
+    },
+    {
+      "source": "local_seed",
       "source_id": "143884",
       "name": "Machi Koro",
       "year_published": 2012,
