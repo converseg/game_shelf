@@ -11,3 +11,6 @@ wheels/
 
 # Local persistent state
 data/
+
+# secrets
+.env
