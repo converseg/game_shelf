@@ -5,7 +5,10 @@ from pathlib import Path
 import textwrap
 
 import click
+import requests
+from dotenv import load_dotenv
 
+from game_shelf.datasource import BggXmlApi2DataSource
 from game_shelf.datasource import LocalSeedDataSource
 from game_shelf.models import GameDetails
 from game_shelf.models import CollectionGame
@@ -86,6 +89,13 @@ def cli(ctx: click.Context, collection_path: Path) -> None:
 
 @cli.command()
 @click.argument("name")
+@click.option(
+    "--local-db",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Use the built-in local seed database instead of BGG (offline mode).",
+)
 @click.option("--rating", type=click.IntRange(1, 10), default=None, help="Personal rating (1-10).")
 @click.option(
     "--owned/--not-owned",
@@ -100,11 +110,28 @@ def cli(ctx: click.Context, collection_path: Path) -> None:
     help="Mark whether this game is on your wishlist.",
 )
 @click.pass_obj
-def add(obj: dict, name: str, rating: int | None, owned: bool, wishlist: bool) -> None:
-    datasource = LocalSeedDataSource()
+def add(
+    obj: dict,
+    name: str,
+    local_db: bool,
+    rating: int | None,
+    owned: bool,
+    wishlist: bool,
+) -> None:
+    load_dotenv()
+    datasource = LocalSeedDataSource() if local_db else BggXmlApi2DataSource()
     store = CollectionStore(obj["collection_path"])
 
-    candidates = datasource.lookup_by_name(name, limit=3)
+    try:
+        candidates = datasource.lookup_by_name(name, limit=3)
+    except requests.HTTPError as e:
+        resp = getattr(e, "response", None)
+        if resp is not None and resp.status_code == 401:
+            raise click.ClickException(
+                "BGG returned 401 Unauthorized. Set `BGG_API_KEY` in your environment/.env, or retry with "
+                "`--local-db` for offline mode."
+            ) from e
+        raise
     if not candidates:
         suggestions = datasource.suggest(name)
         click.echo(f'No match for "{name}".')

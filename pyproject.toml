@@ -15,6 +15,8 @@ dependencies = [
     "requests>=2.33.1",
     "ruff>=0.15.11",
     "tqdm>=4.67.3",
+    "anthropic>=0.97.0",
+    "dotenv>=0.9.9",
 ]
 
 [project.scripts]
