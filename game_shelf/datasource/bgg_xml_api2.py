@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from difflib import get_close_matches
 import os
+from collections.abc import Iterable
 import xml.etree.ElementTree as ET
 
 import requests
@@ -101,6 +102,18 @@ class BggXmlApi2DataSource:
         self._api_key = api_key or os.environ.get("BGG_API_KEY")
         self._client = BggXmlApi2Client(api_key=self._api_key)
 
+    def _thing_batched(self, *, ids: list[str], stats: bool) -> list[ET.Element]:
+        items: list[ET.Element] = []
+
+        def _chunks(values: list[str], size: int) -> Iterable[list[str]]:
+            for i in range(0, len(values), size):
+                yield values[i : i + size]
+
+        for chunk in _chunks(ids, 20):
+            root = self._client.thing(id=chunk, stats=stats)
+            items.extend(list(root.findall("./item")))
+        return items
+
     def lookup_by_name(self, name: str, limit: int = 5) -> list[GameDetails]:
         root = self._client.search(query=name, type="boardgame")
         ids: list[str] = []
@@ -113,9 +126,8 @@ class BggXmlApi2DataSource:
         if not ids:
             return []
 
-        things = self._client.thing(id=ids, stats=True)
         parsed: dict[str, GameDetails] = {}
-        for item in things.findall("./item"):
+        for item in self._thing_batched(ids=ids, stats=True):
             item_id = item.get("id")
             if not item_id:
                 continue
@@ -127,6 +139,25 @@ class BggXmlApi2DataSource:
             if d is not None:
                 ordered.append(d)
         return ordered[:limit]
+
+    def lookup_by_ids(self, ids: list[str], *, stats: bool = True) -> list[GameDetails]:
+        clean = [str(i).strip() for i in ids if str(i).strip()]
+        if not clean:
+            return []
+
+        parsed: dict[str, GameDetails] = {}
+        for item in self._thing_batched(ids=clean, stats=stats):
+            item_id = item.get("id")
+            if not item_id:
+                continue
+            parsed[item_id] = _parse_thing_item(item)
+
+        ordered: list[GameDetails] = []
+        for item_id in clean:
+            d = parsed.get(item_id)
+            if d is not None:
+                ordered.append(d)
+        return ordered
 
     def lookup_best(self, name: str) -> GameDetails | None:
         matches = self.lookup_by_name(name, limit=1)

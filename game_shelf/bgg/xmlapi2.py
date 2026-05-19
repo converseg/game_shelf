@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Iterable
+import random
+import time
 import xml.etree.ElementTree as ET
 
 import requests
@@ -51,9 +53,46 @@ class BggXmlApi2Client:
     def _get(self, path: str, params: dict[str, object | None]) -> str:
         url = f"{self.base_url.rstrip('/')}/{path.lstrip('/')}"
         clean_params = {k: v for k, v in params.items() if v is not None}
-        resp = requests.get(url, params=clean_params, headers=self._headers(), timeout=self.timeout_s)
-        resp.raise_for_status()
-        return resp.text
+        last_exc: Exception | None = None
+        # BGG can rate-limit (429) and can "queue" some /thing requests (often via 202 responses).
+        # Implement a small retry loop with backoff to make interactive sessions usable.
+        for attempt in range(1, 6):
+            try:
+                resp = requests.get(
+                    url,
+                    params=clean_params,
+                    headers=self._headers(),
+                    timeout=self.timeout_s,
+                )
+
+                if resp.status_code == 202:
+                    # Queued: wait and retry.
+                    delay = min(2.0**attempt, 20.0) + random.random()
+                    time.sleep(delay)
+                    continue
+
+                if resp.status_code == 429:
+                    retry_after = resp.headers.get("Retry-After")
+                    try:
+                        delay = float(retry_after) if retry_after else 0.0
+                    except ValueError:
+                        delay = 0.0
+                    if delay <= 0:
+                        delay = min(2.0**attempt, 30.0) + random.random()
+                    time.sleep(delay)
+                    continue
+
+                resp.raise_for_status()
+                return resp.text
+            except requests.RequestException as e:
+                last_exc = e
+                delay = min(2.0**attempt, 20.0) + random.random()
+                time.sleep(delay)
+                continue
+
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("BGG request failed after retries.")
 
     # ---- Endpoints ----
 

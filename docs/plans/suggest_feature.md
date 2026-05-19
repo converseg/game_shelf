@@ -11,7 +11,7 @@ The session starts by asking the user which mode they want:
 The session uses:
 - **Click** for prompts / interactive flow
 - **Anthropic Claude** (`claude-haiku-4-5`) for ranking + explanations
-- **LangGraph** for orchestration
+- **LangGraph** (ReAct agent) for orchestration
 - **BGG XML API2** (`search`, `thing`) for discovery + metadata in Buy mode
 
 Users can pick a recommendation to add to owned/wishlist, optionally rate it, or give feedback to refine results.
@@ -104,6 +104,9 @@ If user chooses **Add**:
 - `candidates`: candidate list (collection-derived or BGG-derived)
 - `ranked_recommendations`: final ranked list with explanation
 - `iteration`: refine loop counter (cap at 2)
+
+Implementation note:
+- The v1 implementation uses a LangGraph prebuilt ReAct agent (`create_react_agent`) with tools for BGG calls, collection access, and interactive follow-up questions.
 
 ### Mode-specific flows
 
