@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 import os
@@ -23,6 +24,15 @@ def _chunk(values: list[str], size: int) -> Iterable[list[str]]:
 
 _BGG_LOCK = threading.Lock()
 
+@dataclass
+class SuggestToolState:
+    search_calls: int = 0
+    allow_search: bool = True
+    pending_user_guidance: str | None = None
+    # Accumulated evidence for wrap-up behavior
+    seen_search_results: list[dict[str, Any]] = field(default_factory=list)
+    seen_things: dict[str, dict[str, Any]] = field(default_factory=dict)  # key = source_id
+
 
 @tool
 def ask_user(question: str) -> str:
@@ -38,11 +48,9 @@ def build_suggest_tools(
     no_bgg: bool,
     verbosity: int = 0,
     check_in_every_searches: int = 0,
-) -> list[Any]:
+) -> tuple[list[Any], SuggestToolState]:
     store = CollectionStore(Path(collection_path))
-    search_calls = 0
-    allow_search = True
-    pending_user_guidance: str | None = None
+    state = SuggestToolState()
 
     @tool
     def list_collection() -> list[dict[str, Any]]:
@@ -72,30 +80,28 @@ def build_suggest_tools(
     def bgg_search(query: str, limit: int = 10) -> list[dict[str, Any]]:
         """Search BoardGameGeek for board games by keyword/name. Returns a list of ids + names."""
 
-        nonlocal search_calls
-        nonlocal allow_search
-        nonlocal pending_user_guidance
+        nonlocal state
         if no_bgg:
             raise RuntimeError("BGG calls are disabled via --no-bgg.")
 
-        search_calls += 1
-        if check_in_every_searches > 0 and search_calls % check_in_every_searches == 0:
+        state.search_calls += 1
+        if check_in_every_searches > 0 and state.search_calls % check_in_every_searches == 0:
             guidance = str(
                 click.prompt(
-                    f"[suggest] Pausing after {search_calls} searches. What next? (e.g. 'keep going', 'wrap it up', or provide new constraints)",
+                    f"[suggest] Pausing after {state.search_calls} searches. What next? (e.g. 'keep going', 'wrap it up', or provide new constraints)",
                     default="keep going",
                     show_default=True,
                 )
             ).strip()
             if guidance.lower() in {"wrap", "wrap it up", "stop", "stop searching", "finish"}:
-                allow_search = False
-                pending_user_guidance = "User asked to wrap it up now. Stop searching and produce final recommendations from current candidates."
+                state.allow_search = False
+                state.pending_user_guidance = "User asked to wrap it up now. Stop searching and produce final recommendations from current candidates."
             else:
-                pending_user_guidance = f"User guidance during search: {guidance}"
+                state.pending_user_guidance = f"User guidance during search: {guidance}"
 
-        if not allow_search:
-            note = pending_user_guidance or "User asked to wrap it up now."
-            pending_user_guidance = None
+        if not state.allow_search:
+            note = state.pending_user_guidance or "User asked to wrap it up now."
+            state.pending_user_guidance = None
             return [{"type": "wrap_up", "note": note}]
 
         client = BggXmlApi2Client(
@@ -133,13 +139,14 @@ def build_suggest_tools(
                     "name": name_elem.get("value") if name_elem is not None else None,
                 }
             )
+        state.seen_search_results.extend(results)
         if verbosity >= 1:
             titles = [str(r.get("name") or "?") for r in results[:5]]
             click.echo(f"[suggest] top matches: {', '.join(titles) if titles else '(none)'}", err=True)
 
-        if pending_user_guidance:
-            note = pending_user_guidance
-            pending_user_guidance = None
+        if state.pending_user_guidance:
+            note = state.pending_user_guidance
+            state.pending_user_guidance = None
             # Return guidance to the agent in-band so it can adjust its plan without requiring
             # an additional tool call.
             return [{"type": "user_guidance", "note": note}] + results
@@ -151,11 +158,10 @@ def build_suggest_tools(
 
         if no_bgg:
             raise RuntimeError("BGG calls are disabled via --no-bgg.")
-        nonlocal allow_search
-        nonlocal pending_user_guidance
-        if not allow_search:
-            note = pending_user_guidance or "User asked to wrap it up now."
-            pending_user_guidance = None
+        nonlocal state
+        if not state.allow_search:
+            note = state.pending_user_guidance or "User asked to wrap it up now."
+            state.pending_user_guidance = None
             return [{"type": "wrap_up", "note": note}]
         client = BggXmlApi2Client(
             api_key=os.environ.get("BGG_API_KEY"),
@@ -173,7 +179,10 @@ def build_suggest_tools(
                 root = client.thing(id=chunk, stats=True)
                 for item in root.findall("./item"):
                     d = _parse_thing_item(item)
-                    parsed.append(d.model_dump(mode="json"))
+                    payload = d.model_dump(mode="json")
+                    parsed.append(payload)
+                    if d.source_id:
+                        state.seen_things[d.source_id] = payload
         return parsed
 
-    return [ask_user, list_collection, add_to_collection, bgg_search, bgg_thing]
+    return [ask_user, list_collection, add_to_collection, bgg_search, bgg_thing], state
