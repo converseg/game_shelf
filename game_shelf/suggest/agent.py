@@ -22,7 +22,9 @@ def run_suggest_agent(
     model: str,
     max_bgg_candidates: int,
     no_bgg: bool,
-    debug: bool = False,
+    debug_level: int = 0,
+    max_agent_steps: int = 35,
+    check_in_every_searches: int = 0,
 ) -> SuggestAgentResult:
     """
     Runs a LangGraph ReAct agent for `game-shelf suggest`.
@@ -57,6 +59,8 @@ def run_suggest_agent(
         collection_path=collection_path,
         max_bgg_candidates=max_bgg_candidates,
         no_bgg=effective_no_bgg,
+        verbosity=debug_level,
+        check_in_every_searches=check_in_every_searches,
     )
 
     system_prompt = f"""
@@ -80,6 +84,8 @@ Rules:
 - Avoid rate limits: prefer a few high-signal searches (e.g. 3-6) over many small ones.
 - Dedupe candidates by source_id, fetch details for likely matches, then filter by constraints.
 - If results are weak, iterate: broaden queries and/or ask a clarifying question.
+- If a tool returns an item with `type="wrap_up"`, stop searching immediately and produce final recommendations from what you have.
+- If a tool returns an item with `type="user_guidance"`, incorporate it and adjust your plan.
 
 Output:
 - Respond ONLY as JSON with shape:
@@ -87,12 +93,18 @@ Output:
 """.strip()
 
     llm = ChatAnthropic(model=model, temperature=0.3, max_tokens=1200)
-    agent = create_react_agent(llm, tools, prompt=system_prompt, debug=debug)
+    agent = create_react_agent(llm, tools, prompt=system_prompt, debug=debug_level >= 2)
 
     # The ReAct agent expects a messages-style input in most LangGraph setups.
     # We'll pass a single user message containing the task; system prompt is supplied above.
     user_message = "Generate recommendations now. Use tools and follow the rules."
-    result = agent.invoke({"messages": [("user", user_message)]})
+    try:
+        result = agent.invoke(
+            {"messages": [("user", user_message)]},
+            config={"recursion_limit": max_agent_steps},
+        )
+    except RuntimeError as e:
+        return SuggestAgentResult(note=str(e))
 
     # `result` commonly contains {"messages": [...]} where the last message is the model output.
     messages = result.get("messages", [])

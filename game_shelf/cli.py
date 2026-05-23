@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from difflib import get_close_matches
 from pathlib import Path
+import re
 import textwrap
 
 import click
@@ -107,6 +108,68 @@ def _prompt_csv_list(label: str) -> list[str]:
     raw = click.prompt(label, default="", show_default=False)
     parts = [p.strip() for p in str(raw).split(",")]
     return [_to_kebab(p) for p in parts if p.strip()]
+
+
+def _parse_action(raw: str) -> tuple[str, str | None]:
+    """
+    Parses the user's action into (kind, value).
+    - kind: "quit" | "refine" | "pick_index" | "pick_name" | "unknown"
+    - value: index string or name string when applicable
+    """
+
+    s = str(raw or "").strip()
+    if not s:
+        return ("quit", None)
+
+    low = s.lower().strip()
+    if low in {"q", "quit", "exit"}:
+        return ("quit", None)
+    if low in {"r", "refine", "redo"}:
+        return ("refine", None)
+
+    m = re.match(r"^\s*(?:add|pick|choose)\s+(\d+)\s*$", low)
+    if m:
+        return ("pick_index", m.group(1))
+
+    if re.match(r"^\d+\s*$", low):
+        return ("pick_index", low)
+
+    m = re.match(r"^\s*(?:add|pick|choose)\s+(.+?)\s*$", s, flags=re.IGNORECASE)
+    if m:
+        return ("pick_name", m.group(1).strip().strip('"'))
+
+    # Treat any other non-empty input as a game-name attempt.
+    return ("pick_name", s.strip().strip('"'))
+
+
+def _find_recommendation_by_name(recs: list[dict], query: str) -> dict | None:
+    q = _norm_name(query)
+    if not q:
+        return None
+
+    # Exact normalized match
+    for rec in recs:
+        name = str(rec.get("name") or "").strip()
+        if _norm_name(name) == q:
+            return rec
+
+    # Substring match
+    for rec in recs:
+        name = str(rec.get("name") or "").strip()
+        if q in _norm_name(name):
+            return rec
+
+    # Fuzzy match
+    names = [str(r.get("name") or "").strip() for r in recs if str(r.get("name") or "").strip()]
+    if not names:
+        return None
+    best = get_close_matches(query, names, n=1, cutoff=0.75)
+    if not best:
+        return None
+    for rec in recs:
+        if str(rec.get("name") or "").strip() == best[0]:
+            return rec
+    return None
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -279,6 +342,34 @@ def rate(obj: dict, name: str, rating: int) -> None:
 @click.option("--count", type=click.IntRange(1, 20), default=5, show_default=True)
 @click.option("--model", type=str, default="claude-haiku-4-5", show_default=True)
 @click.option("--dry-run", is_flag=True, default=False, show_default=True)
+@click.option(
+    "--debug-level",
+    type=click.IntRange(0, 2),
+    default=0,
+    show_default=True,
+    help="0=none, 1=BGG/tool logs, 2=also LangGraph debug stream.",
+)
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Alias for --debug-level 1.",
+)
+@click.option(
+    "--max-agent-steps",
+    type=click.IntRange(5, 200),
+    default=35,
+    show_default=True,
+    help="Hard cap on LangGraph agent steps (limits tool/LLM cycles).",
+)
+@click.option(
+    "--check-in-every-searches",
+    type=click.IntRange(0, 50),
+    default=0,
+    show_default=True,
+    help="If >0, pause every N BGG searches to confirm continuing.",
+)
 @click.option("--owned/--not-owned", "include_owned", default=True, show_default=True)
 @click.option("--wishlist/--not-wishlist", "include_wishlist", default=False, show_default=True)
 @click.option(
@@ -302,6 +393,10 @@ def suggest(
     count: int,
     model: str,
     dry_run: bool,
+    debug_level: int,
+    debug: bool,
+    max_agent_steps: int,
+    check_in_every_searches: int,
     include_owned: bool,
     include_wishlist: bool,
     max_bgg_candidates: int,
@@ -356,6 +451,8 @@ def suggest(
             disliked_games=disliked_games_list,
         )
 
+    effective_debug_level = max(debug_level, 1 if debug else 0)
+
     inputs = collect_inputs()
 
     for iteration in range(3):
@@ -366,6 +463,9 @@ def suggest(
                 model=model,
                 max_bgg_candidates=max_bgg_candidates,
                 no_bgg=no_bgg,
+                debug_level=effective_debug_level,
+                max_agent_steps=max_agent_steps,
+                check_in_every_searches=check_in_every_searches,
             )
         except RuntimeError as e:
             raise click.ClickException(
@@ -398,77 +498,103 @@ def suggest(
                 click.echo("")
                 click.echo(result.note)
 
-        click.echo("")
-        click.echo("Actions: enter a number to add, 'r' to refine, or 'q' to quit.")
-        action = click.prompt("Choose", default="q", show_default=True).strip().lower()
-        if action == "q":
-            return
-        if action == "r":
-            if iteration >= 2:
-                click.echo("Refine limit reached.")
+        while True:
+            click.echo("")
+            click.echo(
+                "Actions: enter a number, type a game name (or 'add <name>'), 'r' to refine, or 'q' to quit."
+            )
+            raw_action = click.prompt("Choose", default="q", show_default=True)
+            kind, value = _parse_action(raw_action)
+
+            if kind == "quit":
                 return
-            inputs = collect_inputs()
-            continue
+            if kind == "refine":
+                if iteration >= 2:
+                    click.echo("Refine limit reached.")
+                    return
+                inputs = collect_inputs()
+                break
 
-        try:
-            idx = int(action)
-        except ValueError:
-            click.echo("Invalid choice.")
-            continue
+            picked: dict | None = None
+            if kind == "pick_index":
+                if not recs:
+                    click.echo(
+                        "No recommendations to select by number. Type a game name, choose 'r' to refine, or 'q' to quit."
+                    )
+                    continue
+                try:
+                    idx = int(value or "")
+                except ValueError:
+                    click.echo("Invalid number.")
+                    continue
+                if not (1 <= idx <= len(recs)):
+                    click.echo(f"Invalid recommendation number (choose 1-{len(recs)}).")
+                    continue
+                picked = recs[idx - 1]
+            elif kind == "pick_name":
+                assert value is not None
+                if recs:
+                    picked = _find_recommendation_by_name(recs, value)
+                if picked is None:
+                    # Allow adding by name even if the agent returned no recommendations.
+                    picked = {"source": "bgg_xml_api", "source_id": "", "name": value}
+            else:
+                click.echo("Invalid choice.")
+                continue
 
-        if not (1 <= idx <= len(recs)):
-            click.echo("Invalid recommendation number.")
-            continue
+            source = str(picked.get("source") or "").strip()
+            source_id = str(picked.get("source_id") or "").strip()
+            name = str(picked.get("name") or "").strip()
+            if not name:
+                click.echo("Selected recommendation is missing required fields.")
+                continue
 
-        picked = recs[idx - 1]
-        source = str(picked.get("source") or "").strip()
-        source_id = str(picked.get("source_id") or "").strip()
-        name = str(picked.get("name") or "").strip()
-        if not (source and source_id and name):
-            click.echo("Selected recommendation is missing required fields.")
-            continue
+            details: GameDetails | None = None
+            if source == "bgg_xml_api":
+                ds = BggXmlApi2DataSource()
+                if source_id:
+                    found = ds.lookup_by_ids([source_id])
+                    details = found[0] if found else None
+                if details is None:
+                    details = ds.lookup_best(name)
+            elif source == "local_seed":
+                ds = LocalSeedDataSource()
+                details = ds.lookup_best(name)
 
-        details: GameDetails | None = None
-        if source == "bgg_xml_api":
-            ds = BggXmlApi2DataSource()
-            found = ds.lookup_by_ids([source_id])
-            details = found[0] if found else None
-        elif source == "local_seed":
-            ds = LocalSeedDataSource()
-            details = ds.lookup_best(name)
+            if details is None:
+                details = GameDetails(source=source or "bgg_xml_api", source_id=source_id or name, name=name)
 
-        if details is None:
-            details = GameDetails(source=source, source_id=source_id, name=name)
+            add_as = click.prompt(
+                "Add as",
+                type=click.Choice(["owned", "wishlist"], case_sensitive=False),
+                default="owned",
+                show_default=True,
+            ).lower()
+            rating = click.prompt(
+                "Rating (1-10, blank to skip)",
+                default="",
+                show_default=False,
+            ).strip()
+            rating_value: int | None = None
+            if rating:
+                try:
+                    rating_value = int(rating)
+                except ValueError as e:
+                    raise click.ClickException("Rating must be an integer 1-10 or blank.") from e
+                if not (1 <= rating_value <= 10):
+                    raise click.ClickException("Rating must be 1-10.")
 
-        add_as = click.prompt(
-            "Add as",
-            type=click.Choice(["owned", "wishlist"], case_sensitive=False),
-            default="owned",
-            show_default=True,
-        ).lower()
-        rating = click.prompt(
-            "Rating (1-10, blank to skip)",
-            default="",
-            show_default=False,
-        ).strip()
-        rating_value: int | None = None
-        if rating:
-            try:
-                rating_value = int(rating)
-            except ValueError as e:
-                raise click.ClickException("Rating must be an integer 1-10 or blank.") from e
-            if not (1 <= rating_value <= 10):
-                raise click.ClickException("Rating must be 1-10.")
-
-        item = CollectionGame(
-            game=details,
-            personal_rating=rating_value,
-            is_owned=(add_as == "owned"),
-            is_wishlist=(add_as == "wishlist"),
-        )
-        if dry_run:
-            click.echo(f"[dry-run] Would add: {details.name}")
+            item = CollectionGame(
+                game=details,
+                personal_rating=rating_value,
+                is_owned=(add_as == "owned"),
+                is_wishlist=(add_as == "wishlist"),
+            )
+            if dry_run:
+                click.echo(f"[dry-run] Would add: {details.name}")
+                return
+            store.upsert(item)
+            click.echo(f"Added: {details.name}")
             return
-        store.upsert(item)
-        click.echo(f"Added: {details.name}")
-        return
+
+        continue

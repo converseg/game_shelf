@@ -36,8 +36,13 @@ def build_suggest_tools(
     collection_path: str,
     max_bgg_candidates: int,
     no_bgg: bool,
+    verbosity: int = 0,
+    check_in_every_searches: int = 0,
 ) -> list[Any]:
     store = CollectionStore(Path(collection_path))
+    search_calls = 0
+    allow_search = True
+    pending_user_guidance: str | None = None
 
     @tool
     def list_collection() -> list[dict[str, Any]]:
@@ -67,13 +72,59 @@ def build_suggest_tools(
     def bgg_search(query: str, limit: int = 10) -> list[dict[str, Any]]:
         """Search BoardGameGeek for board games by keyword/name. Returns a list of ids + names."""
 
+        nonlocal search_calls
+        nonlocal allow_search
+        nonlocal pending_user_guidance
         if no_bgg:
             raise RuntimeError("BGG calls are disabled via --no-bgg.")
-        client = BggXmlApi2Client(api_key=os.environ.get("BGG_API_KEY"), user_agent="game-shelf/0.1 (suggest)")
+
+        search_calls += 1
+        if check_in_every_searches > 0 and search_calls % check_in_every_searches == 0:
+            guidance = str(
+                click.prompt(
+                    f"[suggest] Pausing after {search_calls} searches. What next? (e.g. 'keep going', 'wrap it up', or provide new constraints)",
+                    default="keep going",
+                    show_default=True,
+                )
+            ).strip()
+            if guidance.lower() in {"wrap", "wrap it up", "stop", "stop searching", "finish"}:
+                allow_search = False
+                pending_user_guidance = "User asked to wrap it up now. Stop searching and produce final recommendations from current candidates."
+            else:
+                pending_user_guidance = f"User guidance during search: {guidance}"
+
+        if not allow_search:
+            note = pending_user_guidance or "User asked to wrap it up now."
+            pending_user_guidance = None
+            return [{"type": "wrap_up", "note": note}]
+
+        client = BggXmlApi2Client(
+            api_key=os.environ.get("BGG_API_KEY"),
+            user_agent="game-shelf/0.1 (suggest)",
+            verbose=verbosity >= 1,
+        )
         with _BGG_LOCK:
+            if verbosity >= 1:
+                click.echo(f"[suggest] BGG search: {query!r} (limit={limit})", err=True)
             root = client.search(query=query, type="boardgame")
+
+            # Heuristic fallback: BGG search can be picky with long queries.
+            # If we got no items, retry with a shorter query (first 1-2 tokens).
+            items = list(root.findall("./item"))
+            if not items:
+                words = [w for w in str(query).split() if w.strip()]
+                shorter = None
+                if len(words) >= 2:
+                    shorter = " ".join(words[:2])
+                elif len(words) == 1:
+                    shorter = words[0]
+                if shorter and shorter.lower() != str(query).strip().lower():
+                    if verbosity >= 1:
+                        click.echo(f"[suggest] no results; retrying with {shorter!r}", err=True)
+                    root = client.search(query=shorter, type="boardgame")
+                    items = list(root.findall("./item"))
         results: list[dict[str, Any]] = []
-        for item in root.findall("./item")[: min(limit, max_bgg_candidates)]:
+        for item in items[: min(limit, max_bgg_candidates)]:
             name_elem = item.find("./name")
             results.append(
                 {
@@ -82,6 +133,16 @@ def build_suggest_tools(
                     "name": name_elem.get("value") if name_elem is not None else None,
                 }
             )
+        if verbosity >= 1:
+            titles = [str(r.get("name") or "?") for r in results[:5]]
+            click.echo(f"[suggest] top matches: {', '.join(titles) if titles else '(none)'}", err=True)
+
+        if pending_user_guidance:
+            note = pending_user_guidance
+            pending_user_guidance = None
+            # Return guidance to the agent in-band so it can adjust its plan without requiring
+            # an additional tool call.
+            return [{"type": "user_guidance", "note": note}] + results
         return results
 
     @tool
@@ -90,10 +151,25 @@ def build_suggest_tools(
 
         if no_bgg:
             raise RuntimeError("BGG calls are disabled via --no-bgg.")
-        client = BggXmlApi2Client(api_key=os.environ.get("BGG_API_KEY"), user_agent="game-shelf/0.1 (suggest)")
+        nonlocal allow_search
+        nonlocal pending_user_guidance
+        if not allow_search:
+            note = pending_user_guidance or "User asked to wrap it up now."
+            pending_user_guidance = None
+            return [{"type": "wrap_up", "note": note}]
+        client = BggXmlApi2Client(
+            api_key=os.environ.get("BGG_API_KEY"),
+            user_agent="game-shelf/0.1 (suggest)",
+            verbose=verbosity >= 1,
+        )
         parsed: list[dict[str, Any]] = []
         with _BGG_LOCK:
-            for chunk in _chunk([str(x) for x in ids if str(x).strip()], 20):
+            clean_ids = [str(x) for x in ids if str(x).strip()]
+            if verbosity >= 1:
+                click.echo(f"[suggest] BGG thing: fetching {len(clean_ids)} ids", err=True)
+            for chunk in _chunk(clean_ids, 20):
+                if verbosity >= 1:
+                    click.echo(f"[suggest] BGG thing batch: {len(chunk)} ids", err=True)
                 root = client.thing(id=chunk, stats=True)
                 for item in root.findall("./item"):
                     d = _parse_thing_item(item)
