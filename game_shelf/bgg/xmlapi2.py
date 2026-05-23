@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Iterable
 import random
+import sys
 import time
 import xml.etree.ElementTree as ET
 
@@ -38,11 +39,13 @@ class BggXmlApi2Client:
         base_url: str = "https://boardgamegeek.com/xmlapi2",
         user_agent: str = "game-shelf/0.1",
         timeout_s: float = 30.0,
+        verbose: bool = False,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url
         self.user_agent = user_agent
         self.timeout_s = timeout_s
+        self.verbose = verbose
 
     def _headers(self) -> dict[str, str]:
         headers = {"User-Agent": self.user_agent}
@@ -64,6 +67,8 @@ class BggXmlApi2Client:
                     headers=self._headers(),
                     timeout=self.timeout_s,
                 )
+                if self.verbose:
+                    print(f"[bgg] {resp.status_code} GET {resp.url}", file=sys.stderr)
 
                 if resp.status_code == 202:
                     # Queued: wait and retry.

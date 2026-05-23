@@ -8,11 +8,57 @@ from pydantic import BaseModel, Field
 
 from game_shelf.suggest.models import SuggestInputs
 from game_shelf.suggest.tools import build_suggest_tools
+from game_shelf.suggest.tools import SuggestToolState
 
 
 class SuggestAgentResult(BaseModel):
     recommendations: list[dict[str, Any]] = Field(default_factory=list)
     note: str = ""
+
+
+def _wrap_up_with_llm(
+    *,
+    model: str,
+    inputs: SuggestInputs,
+    tool_state: SuggestToolState,
+) -> SuggestAgentResult:
+    from langchain_anthropic import ChatAnthropic
+
+    llm = ChatAnthropic(model=model, temperature=0.2, max_tokens=900)
+
+    # Prefer detailed things payloads when available; otherwise fall back to search results.
+    candidates = list(tool_state.seen_things.values())
+    if not candidates:
+        candidates = tool_state.seen_search_results
+
+    # Keep prompt bounded.
+    candidates = candidates[:50]
+
+    import json
+
+    prompt = f"""
+You are wrapping up a board game recommendation search after hitting a step limit.
+
+User inputs:
+{json.dumps(inputs.model_dump(mode="json"), ensure_ascii=False)}
+
+Evidence gathered so far (partial candidate list; may be incomplete):
+{json.dumps(candidates, ensure_ascii=False)}
+
+Task:
+- Return up to {inputs.count} recommendations that best match the user.
+- If evidence is thin, do your best with what you have and include a short note that more search may help.
+
+Return ONLY valid JSON:
+{{ "recommendations": [{{"name":"...","source":"bgg_xml_api","source_id":"...","why":"..."}}, ...], "note":"..." }}
+""".strip()
+
+    text = llm.invoke(prompt).content
+    try:
+        payload = json.loads(text)
+        return SuggestAgentResult.model_validate(payload)
+    except Exception:
+        return SuggestAgentResult(note=str(text))
 
 
 def run_suggest_agent(
@@ -22,7 +68,9 @@ def run_suggest_agent(
     model: str,
     max_bgg_candidates: int,
     no_bgg: bool,
-    debug: bool = False,
+    debug_level: int = 0,
+    max_agent_steps: int = 35,
+    check_in_every_searches: int = 0,
 ) -> SuggestAgentResult:
     """
     Runs a LangGraph ReAct agent for `game-shelf suggest`.
@@ -53,10 +101,12 @@ def run_suggest_agent(
 
     effective_no_bgg = no_bgg or inputs.mode == "game-night"
 
-    tools = build_suggest_tools(
+    tools, tool_state = build_suggest_tools(
         collection_path=collection_path,
         max_bgg_candidates=max_bgg_candidates,
         no_bgg=effective_no_bgg,
+        verbosity=debug_level,
+        check_in_every_searches=check_in_every_searches,
     )
 
     system_prompt = f"""
@@ -80,6 +130,8 @@ Rules:
 - Avoid rate limits: prefer a few high-signal searches (e.g. 3-6) over many small ones.
 - Dedupe candidates by source_id, fetch details for likely matches, then filter by constraints.
 - If results are weak, iterate: broaden queries and/or ask a clarifying question.
+- If a tool returns an item with `type="wrap_up"`, stop searching immediately and produce final recommendations from what you have.
+- If a tool returns an item with `type="user_guidance"`, incorporate it and adjust your plan.
 
 Output:
 - Respond ONLY as JSON with shape:
@@ -87,12 +139,22 @@ Output:
 """.strip()
 
     llm = ChatAnthropic(model=model, temperature=0.3, max_tokens=1200)
-    agent = create_react_agent(llm, tools, prompt=system_prompt, debug=debug)
+    agent = create_react_agent(llm, tools, prompt=system_prompt, debug=debug_level >= 2)
 
     # The ReAct agent expects a messages-style input in most LangGraph setups.
     # We'll pass a single user message containing the task; system prompt is supplied above.
     user_message = "Generate recommendations now. Use tools and follow the rules."
-    result = agent.invoke({"messages": [("user", user_message)]})
+    try:
+        result = agent.invoke(
+            {"messages": [("user", user_message)]},
+            config={"recursion_limit": max_agent_steps},
+        )
+    except Exception as e:
+        msg = str(e)
+        # If we hit the recursion/step limit, attempt a tool-free wrap-up using what we already fetched.
+        if "recursion" in msg.lower() or "recursion_limit" in msg.lower():
+            return _wrap_up_with_llm(model=model, inputs=inputs, tool_state=tool_state)
+        return SuggestAgentResult(note=msg)
 
     # `result` commonly contains {"messages": [...]} where the last message is the model output.
     messages = result.get("messages", [])
