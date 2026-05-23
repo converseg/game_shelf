@@ -333,6 +333,63 @@ def rate(obj: dict, name: str, rating: int) -> None:
 
 
 @cli.command()
+@click.argument("source_id")
+@click.option(
+    "--source",
+    type=click.Choice(["local_seed", "bgg_xml_api"], case_sensitive=False),
+    default=None,
+    help="Optional data source (useful if source_id is duplicated).",
+)
+@click.option(
+    "--all",
+    "remove_all",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Remove all matching games (required if source_id is duplicated).",
+)
+@click.pass_obj
+def remove(obj: dict, source_id: str, source: str | None, remove_all: bool) -> None:
+    store = CollectionStore(obj["collection_path"])
+    collection = store.load()
+
+    matches = [
+        item
+        for item in collection
+        if item.game.source_id == source_id and (source is None or item.game.source == source)
+    ]
+
+    if not matches:
+        suffix = f" (source={source})" if source is not None else ""
+        click.echo(f'Warning: no game found with source_id "{source_id}"{suffix}.')
+        raise SystemExit(2)
+
+    if len(matches) > 1:
+        click.echo(f'Warning: {len(matches)} games match source_id "{source_id}".')
+        for item in matches:
+            owned = "yes" if item.is_owned else "no"
+            wishlist = "yes" if item.is_wishlist else "no"
+            click.echo(
+                f"- {item.game.name} | source: {item.game.source} | owned: {owned} | wishlist: {wishlist}"
+            )
+        if not remove_all:
+            click.echo('Refusing to remove: re-run with "--source ..." to disambiguate, or "--all" to remove all.')
+            raise SystemExit(2)
+
+    kept = [
+        item
+        for item in collection
+        if not (item.game.source_id == source_id and (source is None or item.game.source == source))
+    ]
+    store.save(kept)
+
+    if len(matches) == 1:
+        click.echo(f"Removed: {matches[0].game.name} (source_id: {source_id})")
+    else:
+        click.echo(f"Removed {len(matches)} games (source_id: {source_id})")
+
+
+@cli.command()
 @click.option(
     "--mode",
     type=click.Choice(["game-night", "buy"], case_sensitive=False),
