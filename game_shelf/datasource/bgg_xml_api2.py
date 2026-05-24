@@ -75,6 +75,7 @@ def _parse_thing_item(item: ET.Element) -> GameDetails:
         approx = playing
 
     weight = _float(_attr(item.find("./statistics/ratings/averageweight"), "value"))
+    bgg_rating = _float(_attr(item.find("./statistics/ratings/average"), "value"))
 
     # For now, treat BGG categories as "themes" for prompt display; themes are free-form.
     details = GameDetails(
@@ -92,6 +93,7 @@ def _parse_thing_item(item: ET.Element) -> GameDetails:
         mechanics=mechanics,
         themes=categories,
         weight=weight,
+        bgg_rating=bgg_rating,
     )
     return details
 

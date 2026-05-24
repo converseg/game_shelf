@@ -24,6 +24,7 @@ This repo uses `uv` for Python dependency management.
 - List collection: `game-shelf list`
 - Rate a game already in your collection: `game-shelf rate "Catan" 9`
 - Remove a game by id (UUID): `game-shelf remove <id>`
+- Refresh metadata from BGG for existing items: `game-shelf update-bgg-info`
 - Get suggestions: `game-shelf suggest`
 
 ## Data location

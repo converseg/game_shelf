@@ -32,6 +32,7 @@ THING_XML = """<?xml version="1.0" encoding="utf-8"?>
     <link type="boardgamemechanic" value="Trading"/>
     <statistics>
       <ratings>
+        <average value="7.1000"/>
         <averageweight value="2.3000"/>
       </ratings>
     </statistics>
@@ -63,6 +64,7 @@ def test_bgg_datasource_lookup_by_name_mocked(monkeypatch: pytest.MonkeyPatch) -
     assert d.min_players == 3
     assert d.max_players == 4
     assert d.weight is not None
+    assert d.bgg_rating is not None
 
 
 @pytest.mark.integration
