@@ -289,7 +289,7 @@ def list_collection(obj: dict) -> None:
         owned = "yes" if item.is_owned else "no"
         wishlist = "yes" if item.is_wishlist else "no"
         click.echo(
-            f"- {g.name} | owned: {owned} | wishlist: {wishlist} | rating: {rating} | players: {players} | time: {playtime} | source_id: {g.source_id}"
+            f"- {g.name} | id: {item.id} | owned: {owned} | wishlist: {wishlist} | rating: {rating} | players: {players} | time: {playtime} | source: {g.source} | source_id: {g.source_id}"
         )
 
 
@@ -333,12 +333,19 @@ def rate(obj: dict, name: str, rating: int) -> None:
 
 
 @cli.command()
-@click.argument("source_id")
+@click.argument("id_or_source_id")
+@click.option(
+    "--by",
+    type=click.Choice(["id", "source-id"], case_sensitive=False),
+    default="id",
+    show_default=True,
+    help="How to interpret the argument. Prefer 'id' (UUID).",
+)
 @click.option(
     "--source",
     type=click.Choice(["local_seed", "bgg_xml_api"], case_sensitive=False),
     default=None,
-    help="Optional data source (useful if source_id is duplicated).",
+    help="(source-id mode) Optional data source (useful if source_id is duplicated).",
 )
 @click.option(
     "--all",
@@ -346,13 +353,36 @@ def rate(obj: dict, name: str, rating: int) -> None:
     is_flag=True,
     default=False,
     show_default=True,
-    help="Remove all matching games (required if source_id is duplicated).",
+    help="(source-id mode) Remove all matching games (required if source_id is duplicated).",
 )
 @click.pass_obj
-def remove(obj: dict, source_id: str, source: str | None, remove_all: bool) -> None:
+def remove(
+    obj: dict,
+    id_or_source_id: str,
+    by: str,
+    source: str | None,
+    remove_all: bool,
+) -> None:
     store = CollectionStore(obj["collection_path"])
     collection = store.load()
 
+    if by == "id":
+        matches = [item for item in collection if item.id == id_or_source_id]
+        if not matches:
+            click.echo(f'Warning: no game found with id "{id_or_source_id}".')
+            raise SystemExit(2)
+        if len(matches) > 1:
+            click.echo(f'Warning: {len(matches)} games match id "{id_or_source_id}".')
+            click.echo("Refusing to remove: please fix duplicate ids in your collection file.")
+            raise SystemExit(2)
+
+        kept = [item for item in collection if item.id != id_or_source_id]
+        store.save(kept)
+        click.echo(f"Removed: {matches[0].game.name} (id: {id_or_source_id})")
+        return
+
+    # by == "source-id"
+    source_id = id_or_source_id
     matches = [
         item
         for item in collection

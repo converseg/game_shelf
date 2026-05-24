@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import ClassVar, Literal
+from uuid import uuid4
 
 import re
 
@@ -154,6 +155,7 @@ class GameDetails(BaseModel):
 
 
 class CollectionGame(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()), description="Unique local id (UUID).")
     added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     game: GameDetails
 

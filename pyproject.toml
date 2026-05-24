@@ -18,10 +18,22 @@ dependencies = [
     "anthropic>=0.97.0",
     "python-dotenv>=1.0.0",
     "langchain-anthropic>=0.3.0",
+    "pytest>=9.0.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
 ]
 
 [project.scripts]
 game-shelf = "game_shelf.cli:cli"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: tests that make real network calls",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["game_shelf"]
