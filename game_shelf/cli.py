@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from difflib import get_close_matches
+import os
 from pathlib import Path
 import re
 import textwrap
@@ -9,8 +10,10 @@ import click
 import requests
 from dotenv import load_dotenv
 
+from game_shelf.bgg import BggXmlApi2Client
 from game_shelf.datasource import BggXmlApi2DataSource
 from game_shelf.datasource import LocalSeedDataSource
+from game_shelf.datasource.bgg_xml_api2 import _parse_thing_item
 from game_shelf.models import CollectionGame
 from game_shelf.models import GameDetails
 from game_shelf.storage import CollectionStore
@@ -265,14 +268,33 @@ def add(
 
 
 @cli.command(name="list")
+@click.option("--owned", "only_owned", is_flag=True, default=False, help="Show owned games only.")
+@click.option(
+    "--wishlist", "only_wishlist", is_flag=True, default=False, help="Show wishlist games only."
+)
 @click.pass_obj
-def list_collection(obj: dict) -> None:
+def list_collection(obj: dict, only_owned: bool, only_wishlist: bool) -> None:
     store = CollectionStore(obj["collection_path"])
     collection = store.load()
     if not collection:
         click.echo("Collection is empty.")
         return
 
+    if only_owned or only_wishlist:
+        filtered: list[CollectionGame] = []
+        for item in collection:
+            if only_owned and item.is_owned:
+                filtered.append(item)
+                continue
+            if only_wishlist and item.is_wishlist:
+                filtered.append(item)
+        collection = filtered
+
+    if not collection:
+        click.echo("No games match your filters.")
+        raise SystemExit(2)
+
+    click.echo(f"Collection ({len(collection)} games):")
     for item in sorted(collection, key=lambda x: x.game.name.lower()):
         g = item.game
         players = (
@@ -286,11 +308,15 @@ def list_collection(obj: dict) -> None:
             else "?"
         )
         rating = f"{item.personal_rating}/10" if item.personal_rating is not None else "-"
+        bgg_rating = f"{g.bgg_rating:.2f}/10" if g.bgg_rating is not None else "-"
         owned = "yes" if item.is_owned else "no"
         wishlist = "yes" if item.is_wishlist else "no"
+        click.echo(f"- {g.name}")
         click.echo(
-            f"- {g.name} | id: {item.id} | owned: {owned} | wishlist: {wishlist} | rating: {rating} | players: {players} | time: {playtime} | source: {g.source} | source_id: {g.source_id}"
+            f"  owned: {owned} | wishlist: {wishlist} | my rating: {rating} | bgg rating: {bgg_rating} | players: {players} | time: {playtime} | source: {g.source} | source_id: {g.source_id}"
         )
+        click.echo(f"  id: {item.id}")
+        click.echo()
 
 
 @cli.command()
@@ -417,6 +443,151 @@ def remove(
         click.echo(f"Removed: {matches[0].game.name} (source_id: {source_id})")
     else:
         click.echo(f"Removed {len(matches)} games (source_id: {source_id})")
+
+
+def _chunk(values: list[str], size: int) -> list[list[str]]:
+    return [values[i : i + size] for i in range(0, len(values), size)]
+
+def _fmt(v: object) -> str:
+    if v is None:
+        return "-"
+    if isinstance(v, float):
+        return f"{v:.2f}"
+    return str(v)
+
+
+def _diff_game_details(old: GameDetails, new: GameDetails) -> list[str]:
+    diffs: list[str] = []
+
+    def add(label: str, a: object, b: object) -> None:
+        if a != b:
+            diffs.append(f"{label}: {_fmt(a)} -> {_fmt(b)}")
+
+    add("name", old.name, new.name)
+    add("year", old.year_published, new.year_published)
+    add("players", f"{old.min_players}-{old.max_players}", f"{new.min_players}-{new.max_players}")
+    add(
+        "playtime",
+        f"{old.min_playtime_minutes}-{old.max_playtime_minutes}m",
+        f"{new.min_playtime_minutes}-{new.max_playtime_minutes}m",
+    )
+    add("weight", old.weight, new.weight)
+    add("bgg_rating", old.bgg_rating, new.bgg_rating)
+
+    def list_summary(values: list[str]) -> str:
+        if not values:
+            return "0"
+        head = ", ".join(values[:4])
+        more = f" (+{len(values) - 4})" if len(values) > 4 else ""
+        return f"{len(values)} [{head}{more}]"
+
+    if old.mechanics != new.mechanics:
+        diffs.append(f"mechanics: {list_summary(old.mechanics)} -> {list_summary(new.mechanics)}")
+    if old.categories != new.categories:
+        diffs.append(
+            f"categories: {list_summary(old.categories)} -> {list_summary(new.categories)}"
+        )
+    if old.themes != new.themes:
+        diffs.append(f"themes: {list_summary(old.themes)} -> {list_summary(new.themes)}")
+
+    if (old.description or "") != (new.description or ""):
+        diffs.append(
+            f"description: updated ({len(old.description or '')} chars -> {len(new.description or '')} chars)"
+        )
+
+    return diffs
+
+
+@cli.command(name="update-bgg-info")
+@click.option(
+    "--yes",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Apply updates without prompting.",
+)
+@click.pass_obj
+def update_bgg_info(obj: dict, yes: bool) -> None:
+    """
+    Refresh game metadata from BGG for games already in your collection.
+
+    Only applies to games with source=bgg_xml_api.
+    """
+
+    load_dotenv()
+    store = CollectionStore(obj["collection_path"])
+    collection = store.load()
+    if not collection:
+        click.echo("Collection is empty.")
+        return
+
+    targets: list[CollectionGame] = []
+    for item in collection:
+        if item.game.source != "bgg_xml_api":
+            continue
+        if not item.game.source_id:
+            continue
+        targets.append(item)
+
+    if not targets:
+        click.echo("No BGG-sourced games in your collection.")
+        return
+
+    ids = sorted({t.game.source_id for t in targets})
+    click.echo(f"Fetching BGG info for {len(ids)} game(s)...")
+
+    client = BggXmlApi2Client(api_key=os.environ.get("BGG_API_KEY"))
+    fetched: dict[str, GameDetails] = {}
+    failed: list[str] = []
+    for chunk in _chunk(ids, 20):
+        try:
+            root = client.thing(id=chunk, stats=True)
+        except requests.RequestException as e:
+            click.echo(f"Warning: BGG request failed for a batch of {len(chunk)} ids ({e}).", err=True)
+            failed.extend(chunk)
+            continue
+
+        for item in root.findall("./item"):
+            item_id = item.get("id") or ""
+            if not item_id:
+                continue
+            fetched[item_id] = _parse_thing_item(item)
+
+    changed = 0
+    preview: list[str] = []
+    updated: list[CollectionGame] = []
+    for item in collection:
+        if item.game.source == "bgg_xml_api" and item.game.source_id in fetched:
+            new_details = fetched[item.game.source_id]
+            diffs = _diff_game_details(item.game, new_details)
+            if diffs:
+                changed += 1
+                preview.append(f"- {item.game.name} (source_id: {item.game.source_id})")
+                preview.extend([f"  - {d}" for d in diffs])
+            updated.append(item.model_copy(update={"game": new_details}))
+            continue
+        updated.append(item)
+
+    if changed == 0:
+        click.echo("Already up to date.")
+        return
+
+    click.echo(f"Will update {changed} game(s):")
+    for line in preview[:50]:
+        click.echo(line)
+    if len(preview) > 50:
+        click.echo(f"... and {len(preview) - 50} more")
+
+    if failed:
+        click.echo(f"Warning: {len(failed)} id(s) could not be fetched from BGG.", err=True)
+
+    if not yes:
+        if not click.confirm("Apply these updates to your collection file?", default=False):
+            click.echo("Not updated.")
+            return
+
+    store.save(updated)
+    click.echo(f"Updated {changed} game(s).")
 
 
 @cli.command()

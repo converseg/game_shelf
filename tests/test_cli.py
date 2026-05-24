@@ -11,6 +11,58 @@ from game_shelf.models import CollectionGame, GameDetails
 from game_shelf.storage import CollectionStore
 
 
+# ---- backfill-bgg-ratings ----
+
+
+def test_update_bgg_info_updates_items(
+    runner: CliRunner, collection_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import xml.etree.ElementTree as ET
+
+    store = CollectionStore(collection_path)
+    store.save(
+        [
+            CollectionGame(
+                id="1",
+                game=GameDetails(source="bgg_xml_api", source_id="13", name="Catan", bgg_rating=None),
+                is_owned=True,
+                is_wishlist=False,
+            )
+        ]
+    )
+
+    class FakeClient:
+        def __init__(self, api_key: str | None = None):  # type: ignore[no-untyped-def]
+            self.api_key = api_key
+
+        def thing(self, *, id, stats=None, **kw):  # type: ignore[no-untyped-def]
+            return ET.fromstring(
+                """<?xml version="1.0" encoding="utf-8"?>
+<items>
+  <item type="boardgame" id="13">
+    <name type="primary" value="Catan (Refreshed)"/>
+    <statistics>
+      <ratings>
+        <average value="7.1000"/>
+      </ratings>
+    </statistics>
+  </item>
+</items>
+"""
+            )
+
+    monkeypatch.setattr(cli_mod, "BggXmlApi2Client", FakeClient)
+
+    res = runner.invoke(
+        cli,
+        ["--collection-path", str(collection_path), "update-bgg-info", "--yes"],
+    )
+    assert res.exit_code == 0, res.output
+    loaded = store.load()
+    assert loaded[0].game.bgg_rating == pytest.approx(7.1)
+    assert loaded[0].game.name == "Catan (Refreshed)"
+
+
 # ---- add ----
 
 
@@ -113,9 +165,55 @@ def test_list_includes_id_and_source(runner: CliRunner, collection_path: Path) -
 
     res = runner.invoke(cli, ["--collection-path", str(collection_path), "list"])
     assert res.exit_code == 0, res.output
-    assert "id: fixed" in res.output
+    assert "\n  id: fixed\n" in res.output
     assert "source: bgg_xml_api" in res.output
     assert "source_id: 13" in res.output
+
+
+def test_list_filters_owned_and_wishlist(runner: CliRunner, collection_path: Path) -> None:
+    store = CollectionStore(collection_path)
+    store.save(
+        [
+            CollectionGame(
+                id="o",
+                game=GameDetails(source="local_seed", source_id="o1", name="Owned Only"),
+                is_owned=True,
+                is_wishlist=False,
+            ),
+            CollectionGame(
+                id="w",
+                game=GameDetails(source="local_seed", source_id="w1", name="Wishlist Only"),
+                is_owned=False,
+                is_wishlist=True,
+            ),
+            CollectionGame(
+                id="n",
+                game=GameDetails(source="local_seed", source_id="n1", name="Neither"),
+                is_owned=False,
+                is_wishlist=False,
+            ),
+        ]
+    )
+
+    owned = runner.invoke(cli, ["--collection-path", str(collection_path), "list", "--owned"])
+    assert owned.exit_code == 0, owned.output
+    assert "Owned Only" in owned.output
+    assert "Wishlist Only" not in owned.output
+    assert "Neither" not in owned.output
+
+    wishlist = runner.invoke(
+        cli, ["--collection-path", str(collection_path), "list", "--wishlist"]
+    )
+    assert wishlist.exit_code == 0, wishlist.output
+    assert "Wishlist Only" in wishlist.output
+    assert "Owned Only" not in wishlist.output
+    assert "Neither" not in wishlist.output
+
+    both = runner.invoke(cli, ["--collection-path", str(collection_path), "list", "--owned", "--wishlist"])
+    assert both.exit_code == 0, both.output
+    assert "Owned Only" in both.output
+    assert "Wishlist Only" in both.output
+    assert "Neither" not in both.output
 
 
 # ---- rate ----

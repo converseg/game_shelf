@@ -129,6 +129,10 @@ class GameDetails(BaseModel):
     )
 
     weight: float | None = Field(default=None, description="BGG complexity weight (1.0-5.0).")
+    bgg_rating: float | None = Field(
+        default=None,
+        description="BGG average user rating (0.0-10.0) when available.",
+    )
 
     valid_categories: ClassVar[tuple[str, ...]] = VALID_CATEGORIES
     valid_mechanics: ClassVar[tuple[str, ...]] = VALID_MECHANICS
