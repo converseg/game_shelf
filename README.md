@@ -23,7 +23,7 @@ This repo uses `uv` for Python dependency management.
 - Add to wishlist: `game-shelf add "Compile" --wishlist`
 - List collection: `game-shelf list`
 - Rate a game already in your collection: `game-shelf rate "Catan" 9`
-- Remove a game by source_id: `game-shelf remove <source_id>`
+- Remove a game by id (UUID): `game-shelf remove <id>`
 - Get suggestions: `game-shelf suggest`
 
 ## Data location

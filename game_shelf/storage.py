@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from uuid import uuid4
 
 from game_shelf.models import CollectionGame
 
@@ -15,7 +16,15 @@ class CollectionStore:
             return []
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         items = raw.get("collection", [])
-        return [CollectionGame.model_validate(item) for item in items]
+        changed = False
+        for item in items:
+            if isinstance(item, dict) and not item.get("id"):
+                item["id"] = str(uuid4())
+                changed = True
+        collection = [CollectionGame.model_validate(item) for item in items]
+        if changed:
+            self.save(collection)
+        return collection
 
     def save(self, collection: list[CollectionGame]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -41,6 +50,7 @@ class CollectionStore:
             if collection_game.personal_rating is None:
                 merged = merged.model_copy(update={"personal_rating": existing.personal_rating})
             merged = merged.model_copy(update={"added_at": existing.added_at})
+            merged = merged.model_copy(update={"id": existing.id})
             collection[existing_index] = merged
         self.save(collection)
 
