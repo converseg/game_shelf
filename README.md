@@ -48,6 +48,10 @@ If you don’t want any network calls, use `--local-db` (for `add`) or `--mode g
 - Run the CLI module: `uv run python -m game_shelf --help`
 - Run the BGG smoke test script: `uv run python test_bgg.py`
 
+## Future: Frontend / UI
+
+See `docs/plans/frontend_ui.md` for notes on a potential local web UI (including an 8-bit “game shelf” visualization, chat-based suggest panel, and how MCP could fit in).
+
 ## License
 
 MIT (see `LICENSE`).
