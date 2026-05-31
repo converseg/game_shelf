@@ -1,0 +1,166 @@
+<svg width="120" height="460" viewBox="0 0 120 460" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+
+  <!-- Box body -->
+  <rect width="120" height="460" fill="#1a52a8"/>
+
+  <!-- Left/right dark edge lines -->
+  <rect x="0" y="0" width="5" height="460" fill="#0d2d66"/>
+  <rect x="115" y="0" width="5" height="460" fill="#0d2d66"/>
+
+  <!-- Gold top band -->
+  <rect x="0" y="0" width="120" height="28" fill="#d4880a"/>
+  <rect x="0" y="0" width="120" height="3" fill="#f0aa2a"/>
+  <rect x="0" y="25" width="120" height="3" fill="#8a4a00"/>
+
+  <!-- Gold bottom band -->
+  <rect x="0" y="432" width="120" height="28" fill="#d4880a"/>
+  <rect x="0" y="432" width="120" height="3" fill="#8a4a00"/>
+  <rect x="0" y="457" width="120" height="3" fill="#f0aa2a"/>
+
+  <!-- Subtle wave stripes across full body -->
+  <rect x="5" y="36" width="110" height="3" fill="#163f8a" opacity="0.5"/>
+  <rect x="5" y="46" width="110" height="3" fill="#163f8a" opacity="0.5"/>
+  <rect x="5" y="56" width="110" height="3" fill="#163f8a" opacity="0.5"/>
+  <rect x="5" y="66" width="110" height="3" fill="#163f8a" opacity="0.5"/>
+  <rect x="5" y="380" width="110" height="3" fill="#163f8a" opacity="0.5"/>
+  <rect x="5" y="390" width="110" height="3" fill="#163f8a" opacity="0.5"/>
+  <rect x="5" y="400" width="110" height="3" fill="#163f8a" opacity="0.5"/>
+  <rect x="5" y="410" width="110" height="3" fill="#163f8a" opacity="0.5"/>
+  <rect x="5" y="420" width="110" height="3" fill="#163f8a" opacity="0.5"/>
+
+  <!-- Stars -->
+  <rect x="18" y="38" width="4" height="4" fill="#ffe84a"/>
+  <rect x="16" y="36" width="4" height="4" fill="#ffe84a"/>
+  <rect x="82" y="42" width="4" height="4" fill="#ffe84a"/>
+  <rect x="84" y="40" width="4" height="4" fill="#ffe84a"/>
+  <rect x="50" y="34" width="4" height="4" fill="#ccddff"/>
+
+  <!-- ===================== -->
+  <!-- TITLE: CATAN vertical, top quarter -->
+  <!-- Each letter: 5-pixel-wide block font, 4px per pixel unit = 20px wide, 28px tall -->
+  <!-- Centered at x=60. Letters stacked top to bottom. -->
+  <!-- Gap between letters: 8px. Total height: 5*28 + 4*8 = 172px -->
+  <!-- Starting y: 78. Ending y: 250 -->
+
+  <!-- Letter C — y: 78 -->
+  <!-- ██████ -->
+  <!-- █      -->
+  <!-- █      -->
+  <!-- █      -->
+  <!-- ██████ -->
+  <rect x="40" y="78"  width="40" height="6" fill="#fff8e8"/> <!-- top bar -->
+  <rect x="40" y="78"  width="6"  height="26" fill="#fff8e8"/> <!-- left bar -->
+  <rect x="40" y="98"  width="40" height="6" fill="#fff8e8"/> <!-- bottom bar -->
+
+  <!-- Letter A — y: 114 -->
+  <!-- ██████ -->
+  <!-- █    █ -->
+  <!-- ██████ -->
+  <!-- █    █ -->
+  <!-- █    █ -->
+  <rect x="40" y="114" width="40" height="6" fill="#fff8e8"/> <!-- top bar -->
+  <rect x="40" y="114" width="6"  height="32" fill="#fff8e8"/> <!-- left bar -->
+  <rect x="74" y="114" width="6"  height="32" fill="#fff8e8"/> <!-- right bar -->
+  <rect x="40" y="132" width="40" height="6" fill="#fff8e8"/> <!-- mid bar -->
+
+  <!-- Letter T — y: 160 -->
+  <!-- ██████ -->
+  <!--   ██   -->
+  <!--   ██   -->
+  <!--   ██   -->
+  <!--   ██   -->
+  <rect x="40" y="160" width="40" height="6" fill="#fff8e8"/> <!-- top bar -->
+  <rect x="57" y="160" width="6"  height="34" fill="#fff8e8"/> <!-- stem -->
+
+  <!-- Letter A — y: 208 -->
+  <rect x="40" y="208" width="40" height="6" fill="#fff8e8"/>
+  <rect x="40" y="208" width="6"  height="32" fill="#fff8e8"/>
+  <rect x="74" y="208" width="6"  height="32" fill="#fff8e8"/>
+  <rect x="40" y="226" width="40" height="6" fill="#fff8e8"/>
+
+  <!-- Letter N — y: 254 -->
+  <rect x="40" y="254" width="6"  height="34" fill="#fff8e8"/> <!-- left bar -->
+  <rect x="74" y="254" width="6"  height="34" fill="#fff8e8"/> <!-- right bar -->
+  <rect x="46" y="254" width="6"  height="8"  fill="#fff8e8"/> <!-- top-left diagonal step 1 -->
+  <rect x="52" y="262" width="6"  height="8"  fill="#fff8e8"/> <!-- diagonal step 2 -->
+  <rect x="58" y="270" width="6"  height="8"  fill="#fff8e8"/> <!-- diagonal step 3 -->
+  <rect x="64" y="278" width="6"  height="10" fill="#fff8e8"/> <!-- diagonal step 4 to bottom-right -->
+
+  <!-- Divider line below title -->
+  <rect x="20" y="296" width="80" height="3" fill="#d4880a"/>
+
+  <!-- ===================== -->
+  <!-- HEX TILES: 3 pairs, evenly spaced in bottom half -->
+  <!-- Available: y=305 to y=425 = 120px for 3 rows -->
+  <!-- Row centers: y=320, y=360, y=400 -->
+  <!-- Each hex: 44px wide, 36px tall. Left center x=38, right center x=82 -->
+
+  <!-- Flat-top hex macro: center (cx,cy), half-width=22, half-height=18 -->
+  <!-- Points: cx-22,cy  cx-11,cy-18  cx+11,cy-18  cx+22,cy  cx+11,cy+18  cx-11,cy+18 -->
+
+  <!-- ROW 1: FOREST left, WHEAT right -->
+  <!-- Forest (cx=38, cy=322) -->
+  <polygon points="16,322 27,304 49,304 60,322 49,340 27,340" fill="#1a7a22"/>
+  <polygon points="18,322 29,306 47,306 58,322 47,338 29,338" fill="#28a030"/>
+  <rect x="33" y="311" width="4" height="14" fill="#0d4010"/>
+  <rect x="30" y="307" width="10" height="7" fill="#1a6020"/>
+  <rect x="40" y="313" width="4" height="12" fill="#0d4010"/>
+  <rect x="37" y="309" width="10" height="7" fill="#1a6020"/>
+
+  <!-- Wheat (cx=82, cy=322) -->
+  <polygon points="60,322 71,304 93,304 104,322 93,340 71,340" fill="#c8900a"/>
+  <polygon points="62,322 73,306 91,306 102,322 91,338 73,338" fill="#e8b020"/>
+  <rect x="74" y="311" width="4" height="18" fill="#7a4a00"/>
+  <rect x="72" y="307" width="8" height="6" fill="#ccaa00"/>
+  <rect x="82" y="311" width="4" height="18" fill="#7a4a00"/>
+  <rect x="80" y="307" width="8" height="6" fill="#ccaa00"/>
+  <rect x="90" y="311" width="4" height="18" fill="#7a4a00"/>
+  <rect x="88" y="307" width="8" height="6" fill="#ccaa00"/>
+
+  <!-- ROW 2: MOUNTAIN left, PASTURE right -->
+  <!-- Mountain (cx=38, cy=364) -->
+  <polygon points="16,364 27,346 49,346 60,364 49,382 27,382" fill="#5a5a72"/>
+  <polygon points="18,364 29,348 47,348 58,364 47,380 29,380" fill="#7878a0"/>
+  <rect x="30" y="352" width="6" height="6" fill="#eeeeff"/>
+  <rect x="27" y="356" width="12" height="4" fill="#aaaacc"/>
+  <rect x="24" y="360" width="18" height="8" fill="#6a6a88"/>
+  <rect x="42" y="354" width="6" height="6" fill="#eeeeff"/>
+  <rect x="39" y="358" width="12" height="4" fill="#aaaacc"/>
+
+  <!-- Pasture (cx=82, cy=364) -->
+  <polygon points="60,364 71,346 93,346 104,364 93,382 71,382" fill="#30aa40"/>
+  <polygon points="62,364 73,348 91,348 102,364 91,380 73,380" fill="#44cc55"/>
+  <rect x="69" y="358" width="14" height="8" fill="#eeeeff"/>
+  <rect x="67" y="360" width="18" height="6" fill="#eeeeff"/>
+  <rect x="71" y="366" width="4" height="5" fill="#ccccdd"/>
+  <rect x="77" y="366" width="4" height="5" fill="#ccccdd"/>
+  <rect x="85" y="358" width="10" height="8" fill="#eeeeff"/>
+  <rect x="83" y="360" width="14" height="6" fill="#eeeeff"/>
+  <rect x="87" y="366" width="4" height="5" fill="#ccccdd"/>
+
+  <!-- ROW 3: BRICK left, DESERT right -->
+  <!-- Brick (cx=38, cy=406) -->
+  <polygon points="16,406 27,388 49,388 60,406 49,424 27,424" fill="#aa3820"/>
+  <polygon points="18,406 29,390 47,390 58,406 47,422 29,422" fill="#cc4a2a"/>
+  <rect x="24" y="396" width="10" height="5" fill="#992810"/>
+  <rect x="36" y="396" width="10" height="5" fill="#992810"/>
+  <rect x="22" y="403" width="7" height="5" fill="#992810"/>
+  <rect x="31" y="403" width="14" height="5" fill="#992810"/>
+  <rect x="24" y="410" width="10" height="5" fill="#992810"/>
+  <rect x="36" y="410" width="10" height="5" fill="#992810"/>
+  <rect x="24" y="401" width="24" height="2" fill="#771808"/>
+  <rect x="24" y="408" width="24" height="2" fill="#771808"/>
+  <rect x="34" y="396" width="2" height="5" fill="#771808"/>
+  <rect x="29" y="403" width="2" height="5" fill="#771808"/>
+  <rect x="34" y="410" width="2" height="5" fill="#771808"/>
+
+  <!-- Desert (cx=82, cy=406) -->
+  <polygon points="60,406 71,388 93,388 104,406 93,424 71,424" fill="#c8a840"/>
+  <polygon points="62,406 73,390 91,390 102,406 91,422 73,422" fill="#e8c85a"/>
+  <rect x="79" y="394" width="6" height="20" fill="#4a8830"/>
+  <rect x="73" y="399" width="10" height="5" fill="#4a8830"/>
+  <rect x="85" y="396" width="8" height="5" fill="#4a8830"/>
+  <rect x="73" y="414" width="20" height="2" fill="#b08828"/>
+  <rect x="77" y="418" width="12" height="2" fill="#b08828"/>
+
+</svg>

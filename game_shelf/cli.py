@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import textwrap
+import webbrowser
 
 import click
 import requests
@@ -14,6 +15,7 @@ from game_shelf.bgg import BggXmlApi2Client
 from game_shelf.datasource import BggXmlApi2DataSource
 from game_shelf.datasource import LocalSeedDataSource
 from game_shelf.datasource.bgg_xml_api2 import _parse_thing_item
+from game_shelf.frontend import write_shelf_html
 from game_shelf.models import CollectionGame
 from game_shelf.models import GameDetails
 from game_shelf.storage import CollectionStore
@@ -317,6 +319,37 @@ def list_collection(obj: dict, only_owned: bool, only_wishlist: bool) -> None:
         )
         click.echo(f"  id: {item.id}")
         click.echo()
+
+
+@cli.command(name="ui")
+@click.option(
+    "--output",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="HTML file to write. Defaults to shelf.html beside the collection file.",
+)
+@click.option(
+    "--open",
+    "open_browser",
+    is_flag=True,
+    default=False,
+    help="Open the generated shelf in your default browser.",
+)
+@click.pass_obj
+def ui(obj: dict, output: Path | None, open_browser: bool) -> None:
+    store = CollectionStore(obj["collection_path"])
+    collection = store.load()
+    output_path = output or Path(obj["collection_path"]).with_name("shelf.html")
+
+    write_shelf_html(
+        collection,
+        collection_path=obj["collection_path"],
+        output_path=output_path,
+    )
+
+    click.echo(f"Wrote shelf UI: {output_path}")
+    if open_browser:
+        webbrowser.open(output_path.resolve().as_uri())
 
 
 @cli.command()

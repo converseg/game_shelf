@@ -216,6 +216,48 @@ def test_list_filters_owned_and_wishlist(runner: CliRunner, collection_path: Pat
     assert "Neither" not in both.output
 
 
+# ---- ui ----
+
+
+def test_ui_writes_shelf_html_from_collection(runner: CliRunner, collection_path: Path, tmp_path: Path) -> None:
+    store = CollectionStore(collection_path)
+    store.save(
+        [
+            CollectionGame(
+                id="game-1",
+                game=GameDetails(
+                    source="bgg_xml_api",
+                    source_id="13",
+                    name="Catan",
+                    year_published=1995,
+                    min_players=3,
+                    max_players=4,
+                    min_playtime_minutes=60,
+                    max_playtime_minutes=120,
+                    bgg_rating=7.1,
+                ),
+                is_owned=True,
+                is_wishlist=False,
+                personal_rating=8,
+            )
+        ]
+    )
+    output_path = tmp_path / "shelf.html"
+
+    res = runner.invoke(
+        cli,
+        ["--collection-path", str(collection_path), "ui", "--output", str(output_path)],
+    )
+
+    assert res.exit_code == 0, res.output
+    assert "Wrote shelf UI:" in res.output
+    html = output_path.read_text(encoding="utf-8")
+    assert "<title>Game Shelf</title>" in html
+    assert '"name": "Catan"' in html
+    assert '"sourceId": "13"' in html
+    assert "Board game shelf" in html
+
+
 # ---- rate ----
 
 
