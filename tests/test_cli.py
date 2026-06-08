@@ -6,6 +6,7 @@ import pytest
 from click.testing import CliRunner
 
 import game_shelf.cli as cli_mod
+import game_shelf.services.bgg as svc_bgg
 from game_shelf.cli import cli
 from game_shelf.models import CollectionGame, GameDetails
 from game_shelf.storage import CollectionStore
@@ -14,11 +15,26 @@ from game_shelf.storage import CollectionStore
 # ---- backfill-bgg-ratings ----
 
 
+def _inject_fake_bgg_client(
+    monkeypatch: pytest.MonkeyPatch,
+    xml_fixture: str,
+) -> None:
+    """Replace the BggXmlApi2Client used by the service layer with a fake."""
+    import xml.etree.ElementTree as ET
+
+    class FakeClient:
+        def __init__(self, api_key: str | None = None):  # type: ignore[no-untyped-def]
+            self.api_key = api_key
+
+        def thing(self, *, id, stats=None, **kw):  # type: ignore[no-untyped-def]
+            return ET.fromstring(xml_fixture)
+
+    monkeypatch.setattr(svc_bgg, "BggXmlApi2Client", FakeClient)
+
+
 def test_update_bgg_info_updates_items(
     runner: CliRunner, collection_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import xml.etree.ElementTree as ET
-
     store = CollectionStore(collection_path)
     store.save(
         [
@@ -31,13 +47,9 @@ def test_update_bgg_info_updates_items(
         ]
     )
 
-    class FakeClient:
-        def __init__(self, api_key: str | None = None):  # type: ignore[no-untyped-def]
-            self.api_key = api_key
-
-        def thing(self, *, id, stats=None, **kw):  # type: ignore[no-untyped-def]
-            return ET.fromstring(
-                """<?xml version="1.0" encoding="utf-8"?>
+    _inject_fake_bgg_client(
+        monkeypatch,
+        """<?xml version="1.0" encoding="utf-8"?>
 <items>
   <item type="boardgame" id="13">
     <name type="primary" value="Catan (Refreshed)"/>
@@ -48,10 +60,8 @@ def test_update_bgg_info_updates_items(
     </statistics>
   </item>
 </items>
-"""
-            )
-
-    monkeypatch.setattr(cli_mod, "BggXmlApi2Client", FakeClient)
+""",
+    )
 
     res = runner.invoke(
         cli,
@@ -412,6 +422,5 @@ def test_remove_by_source_id_refuses_on_duplicates(runner: CliRunner, collection
         ],
     )
     assert res.exit_code == 2
-    assert 'Warning: 2 games match source_id "13".' in res.output
-    assert "Refusing to remove" in res.output
+    assert '2 games match source_id' in res.output
 

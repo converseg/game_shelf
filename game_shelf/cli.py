@@ -14,10 +14,17 @@ from dotenv import load_dotenv
 from game_shelf.bgg import BggXmlApi2Client
 from game_shelf.datasource import BggXmlApi2DataSource
 from game_shelf.datasource import LocalSeedDataSource
-from game_shelf.datasource.bgg_xml_api2 import _parse_thing_item
 from game_shelf.frontend import write_shelf_html
 from game_shelf.models import CollectionGame
 from game_shelf.models import GameDetails
+from game_shelf.services import add_game as svc_add_game
+from game_shelf.services import apply_metadata_updates
+from game_shelf.services import list_games as svc_list_games
+from game_shelf.services import preview_metadata_updates
+from game_shelf.services import rate_game as svc_rate_game
+from game_shelf.services import remove_by_source as svc_remove_by_source
+from game_shelf.services import remove_game as svc_remove_game
+from game_shelf.services import search_games as svc_search_games
 from game_shelf.storage import CollectionStore
 from game_shelf.suggest import run_suggest_agent
 from game_shelf.suggest.models import SuggestConstraints
@@ -222,8 +229,8 @@ def add(
     wishlist: bool,
 ) -> None:
     load_dotenv()
+    collection_path: Path = obj["collection_path"]
     datasource = LocalSeedDataSource() if local_db else BggXmlApi2DataSource()
-    store = CollectionStore(obj["collection_path"])
 
     try:
         candidates = datasource.lookup_by_name(name, limit=3)
@@ -263,8 +270,12 @@ def add(
 
     details = candidates[chosen - 1]
 
-    store.upsert(
-        CollectionGame(game=details, personal_rating=rating, is_owned=owned, is_wishlist=wishlist)
+    svc_add_game(
+        collection_path,
+        details,
+        owned=owned,
+        wishlist=wishlist,
+        rating=rating,
     )
     click.echo(f"Added: {details.name} ({details.min_players}-{details.max_players} players)")
 
@@ -276,25 +287,25 @@ def add(
 )
 @click.pass_obj
 def list_collection(obj: dict, only_owned: bool, only_wishlist: bool) -> None:
-    store = CollectionStore(obj["collection_path"])
-    collection = store.load()
+    collection_path: Path = obj["collection_path"]
+
+    if only_owned and only_wishlist:
+        # Both flags: OR logic (show if owned OR wishlist)
+        collection = svc_list_games(collection_path)
+        collection = [g for g in collection if g.is_owned or g.is_wishlist]
+    elif only_owned:
+        collection = svc_list_games(collection_path, owned=True)
+    elif only_wishlist:
+        collection = svc_list_games(collection_path, wishlist=True)
+    else:
+        collection = svc_list_games(collection_path)
+
     if not collection:
+        if only_owned or only_wishlist:
+            click.echo("No games match your filters.")
+            raise SystemExit(2)
         click.echo("Collection is empty.")
         return
-
-    if only_owned or only_wishlist:
-        filtered: list[CollectionGame] = []
-        for item in collection:
-            if only_owned and item.is_owned:
-                filtered.append(item)
-                continue
-            if only_wishlist and item.is_wishlist:
-                filtered.append(item)
-        collection = filtered
-
-    if not collection:
-        click.echo("No games match your filters.")
-        raise SystemExit(2)
 
     click.echo(f"Collection ({len(collection)} games):")
     for item in sorted(collection, key=lambda x: x.game.name.lower()):
@@ -335,15 +346,55 @@ def list_collection(obj: dict, only_owned: bool, only_wishlist: bool) -> None:
     default=False,
     help="Open the generated shelf in your default browser.",
 )
+@click.option(
+    "--serve",
+    is_flag=True,
+    default=False,
+    help="Start a local API server instead of generating static HTML.",
+)
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    show_default=True,
+    help="Host to bind the API server.",
+)
+@click.option(
+    "--port",
+    type=int,
+    default=8765,
+    show_default=True,
+    help="Port to bind the API server.",
+)
 @click.pass_obj
-def ui(obj: dict, output: Path | None, open_browser: bool) -> None:
-    store = CollectionStore(obj["collection_path"])
-    collection = store.load()
-    output_path = output or Path(obj["collection_path"]).with_name("shelf.html")
+def ui(
+    obj: dict,
+    output: Path | None,
+    open_browser: bool,
+    serve: bool,
+    host: str,
+    port: int,
+) -> None:
+    collection_path: Path = obj["collection_path"]
+
+    if serve:
+        import uvicorn
+
+        from game_shelf.api import create_app
+
+        app = create_app(collection_path)
+        click.echo(f"Starting Game Shelf API at http://{host}:{port}")
+        click.echo(f"API docs at http://{host}:{port}/docs")
+        if open_browser:
+            webbrowser.open(f"http://{host}:{port}")
+        uvicorn.run(app, host=host, port=port, log_level="info")
+        return
+
+    collection = CollectionStore(collection_path).load()
+    output_path = output or collection_path.with_name("shelf.html")
 
     write_shelf_html(
         collection,
-        collection_path=obj["collection_path"],
+        collection_path=collection_path,
         output_path=output_path,
     )
 
@@ -357,23 +408,27 @@ def ui(obj: dict, output: Path | None, open_browser: bool) -> None:
 @click.argument("rating", type=click.IntRange(1, 10))
 @click.pass_obj
 def rate(obj: dict, name: str, rating: int) -> None:
-    store = CollectionStore(obj["collection_path"])
+    collection_path: Path = obj["collection_path"]
 
+    # Try resolving via local seed first
     datasource = LocalSeedDataSource()
     details = datasource.lookup_best(name)
     if details is not None:
-        if store.set_rating(source=details.source, source_id=details.source_id, rating=rating):
+        result = svc_rate_game(collection_path, details.source, details.source_id, rating)
+        if result is not None:
             click.echo(f"Rated: {details.name} = {rating}/10")
             return
         click.echo(f'"{details.name}" is not in your collection yet. Add it first.')
         raise SystemExit(2)
 
-    collection = store.load()
+    # Fall back to fuzzy matching against collection names
+    collection = svc_list_games(collection_path)
     target = _norm_name(name)
     matches = [item for item in collection if _norm_name(item.game.name) == target]
     if len(matches) == 1:
         g = matches[0].game
-        if store.set_rating(source=g.source, source_id=g.source_id, rating=rating):
+        result = svc_rate_game(collection_path, g.source, g.source_id, rating)
+        if result is not None:
             click.echo(f"Rated: {g.name} = {rating}/10")
             return
 
@@ -422,113 +477,37 @@ def remove(
     source: str | None,
     remove_all: bool,
 ) -> None:
-    store = CollectionStore(obj["collection_path"])
-    collection = store.load()
+    collection_path: Path = obj["collection_path"]
 
     if by == "id":
-        matches = [item for item in collection if item.id == id_or_source_id]
-        if not matches:
+        removed = svc_remove_game(collection_path, id_or_source_id)
+        if removed is None:
             click.echo(f'Warning: no game found with id "{id_or_source_id}".')
             raise SystemExit(2)
-        if len(matches) > 1:
-            click.echo(f'Warning: {len(matches)} games match id "{id_or_source_id}".')
-            click.echo("Refusing to remove: please fix duplicate ids in your collection file.")
-            raise SystemExit(2)
-
-        kept = [item for item in collection if item.id != id_or_source_id]
-        store.save(kept)
-        click.echo(f"Removed: {matches[0].game.name} (id: {id_or_source_id})")
+        click.echo(f"Removed: {removed.game.name} (id: {id_or_source_id})")
         return
 
     # by == "source-id"
-    source_id = id_or_source_id
-    matches = [
-        item
-        for item in collection
-        if item.game.source_id == source_id and (source is None or item.game.source == source)
-    ]
+    try:
+        removed = svc_remove_by_source(
+            collection_path,
+            id_or_source_id,
+            source=source,
+            remove_all=remove_all,
+        )
+    except ValueError as e:
+        click.echo(str(e))
+        raise SystemExit(2) from e
 
-    if not matches:
+    if not removed:
         suffix = f" (source={source})" if source is not None else ""
-        click.echo(f'Warning: no game found with source_id "{source_id}"{suffix}.')
+        click.echo(f'Warning: no game found with source_id "{id_or_source_id}"{suffix}.')
         raise SystemExit(2)
 
-    if len(matches) > 1:
-        click.echo(f'Warning: {len(matches)} games match source_id "{source_id}".')
-        for item in matches:
-            owned = "yes" if item.is_owned else "no"
-            wishlist = "yes" if item.is_wishlist else "no"
-            click.echo(
-                f"- {item.game.name} | source: {item.game.source} | owned: {owned} | wishlist: {wishlist}"
-            )
-        if not remove_all:
-            click.echo('Refusing to remove: re-run with "--source ..." to disambiguate, or "--all" to remove all.')
-            raise SystemExit(2)
-
-    kept = [
-        item
-        for item in collection
-        if not (item.game.source_id == source_id and (source is None or item.game.source == source))
-    ]
-    store.save(kept)
-
-    if len(matches) == 1:
-        click.echo(f"Removed: {matches[0].game.name} (source_id: {source_id})")
+    if len(removed) == 1:
+        click.echo(f"Removed: {removed[0].game.name} (source_id: {id_or_source_id})")
     else:
-        click.echo(f"Removed {len(matches)} games (source_id: {source_id})")
-
-
-def _chunk(values: list[str], size: int) -> list[list[str]]:
-    return [values[i : i + size] for i in range(0, len(values), size)]
-
-def _fmt(v: object) -> str:
-    if v is None:
-        return "-"
-    if isinstance(v, float):
-        return f"{v:.2f}"
-    return str(v)
-
-
-def _diff_game_details(old: GameDetails, new: GameDetails) -> list[str]:
-    diffs: list[str] = []
-
-    def add(label: str, a: object, b: object) -> None:
-        if a != b:
-            diffs.append(f"{label}: {_fmt(a)} -> {_fmt(b)}")
-
-    add("name", old.name, new.name)
-    add("year", old.year_published, new.year_published)
-    add("players", f"{old.min_players}-{old.max_players}", f"{new.min_players}-{new.max_players}")
-    add(
-        "playtime",
-        f"{old.min_playtime_minutes}-{old.max_playtime_minutes}m",
-        f"{new.min_playtime_minutes}-{new.max_playtime_minutes}m",
-    )
-    add("weight", old.weight, new.weight)
-    add("bgg_rating", old.bgg_rating, new.bgg_rating)
-
-    def list_summary(values: list[str]) -> str:
-        if not values:
-            return "0"
-        head = ", ".join(values[:4])
-        more = f" (+{len(values) - 4})" if len(values) > 4 else ""
-        return f"{len(values)} [{head}{more}]"
-
-    if old.mechanics != new.mechanics:
-        diffs.append(f"mechanics: {list_summary(old.mechanics)} -> {list_summary(new.mechanics)}")
-    if old.categories != new.categories:
-        diffs.append(
-            f"categories: {list_summary(old.categories)} -> {list_summary(new.categories)}"
-        )
-    if old.themes != new.themes:
-        diffs.append(f"themes: {list_summary(old.themes)} -> {list_summary(new.themes)}")
-
-    if (old.description or "") != (new.description or ""):
-        diffs.append(
-            f"description: updated ({len(old.description or '')} chars -> {len(new.description or '')} chars)"
-        )
-
-    return diffs
+        click.echo(f"Removed {len(removed)} games (source_id: {id_or_source_id})")
 
 
 @cli.command(name="update-bgg-info")
@@ -548,79 +527,41 @@ def update_bgg_info(obj: dict, yes: bool) -> None:
     """
 
     load_dotenv()
-    store = CollectionStore(obj["collection_path"])
-    collection = store.load()
-    if not collection:
-        click.echo("Collection is empty.")
-        return
+    collection_path: Path = obj["collection_path"]
 
-    targets: list[CollectionGame] = []
-    for item in collection:
-        if item.game.source != "bgg_xml_api":
-            continue
-        if not item.game.source_id:
-            continue
-        targets.append(item)
+    preview = preview_metadata_updates(collection_path)
 
-    if not targets:
-        click.echo("No BGG-sourced games in your collection.")
-        return
-
-    ids = sorted({t.game.source_id for t in targets})
-    click.echo(f"Fetching BGG info for {len(ids)} game(s)...")
-
-    client = BggXmlApi2Client(api_key=os.environ.get("BGG_API_KEY"))
-    fetched: dict[str, GameDetails] = {}
-    failed: list[str] = []
-    for chunk in _chunk(ids, 20):
-        try:
-            root = client.thing(id=chunk, stats=True)
-        except requests.RequestException as e:
-            click.echo(f"Warning: BGG request failed for a batch of {len(chunk)} ids ({e}).", err=True)
-            failed.extend(chunk)
-            continue
-
-        for item in root.findall("./item"):
-            item_id = item.get("id") or ""
-            if not item_id:
-                continue
-            fetched[item_id] = _parse_thing_item(item)
-
-    changed = 0
-    preview: list[str] = []
-    updated: list[CollectionGame] = []
-    for item in collection:
-        if item.game.source == "bgg_xml_api" and item.game.source_id in fetched:
-            new_details = fetched[item.game.source_id]
-            diffs = _diff_game_details(item.game, new_details)
-            if diffs:
-                changed += 1
-                preview.append(f"- {item.game.name} (source_id: {item.game.source_id})")
-                preview.extend([f"  - {d}" for d in diffs])
-            updated.append(item.model_copy(update={"game": new_details}))
-            continue
-        updated.append(item)
-
-    if changed == 0:
+    if not preview.changed_games:
+        if preview.failed_ids:
+            click.echo(
+                f"Warning: {len(preview.failed_ids)} id(s) could not be fetched from BGG.",
+                err=True,
+            )
+            return
         click.echo("Already up to date.")
         return
 
-    click.echo(f"Will update {changed} game(s):")
-    for line in preview[:50]:
-        click.echo(line)
-    if len(preview) > 50:
-        click.echo(f"... and {len(preview) - 50} more")
+    click.echo(f"Will update {len(preview.changed_games)} game(s):")
+    shown = 0
+    for item, diffs in preview.changed_games:
+        if shown >= 50:
+            click.echo(f"... and {len(preview.changed_games) - shown} more")
+            break
+        click.echo(f"- {item.game.name} (source_id: {item.game.source_id})")
+        for d in diffs:
+            click.echo(f"  - {d.field}: {d.old} -> {d.new}")
+        shown += 1
 
-    if failed:
-        click.echo(f"Warning: {len(failed)} id(s) could not be fetched from BGG.", err=True)
+    if preview.failed_ids:
+        click.echo(f"Warning: {len(preview.failed_ids)} id(s) could not be fetched from BGG.", err=True)
 
     if not yes:
         if not click.confirm("Apply these updates to your collection file?", default=False):
             click.echo("Not updated.")
             return
 
-    store.save(updated)
-    click.echo(f"Updated {changed} game(s).")
+    result = apply_metadata_updates(collection_path)
+    click.echo(f"Updated {len(result.changed_games)} game(s).")
 
 
 @cli.command()
@@ -694,7 +635,7 @@ def suggest(
     no_bgg: bool,
 ) -> None:
     load_dotenv()
-    store = CollectionStore(obj["collection_path"])
+    collection_path: Path = obj["collection_path"]
 
     chosen_mode = mode
     if chosen_mode is None:
@@ -750,7 +691,7 @@ def suggest(
         try:
             result = run_suggest_agent(
                 inputs=inputs,
-                collection_path=str(obj["collection_path"]),
+                collection_path=str(collection_path),
                 model=model,
                 max_bgg_candidates=max_bgg_candidates,
                 no_bgg=no_bgg,
@@ -875,16 +816,17 @@ def suggest(
                 if not (1 <= rating_value <= 10):
                     raise click.ClickException("Rating must be 1-10.")
 
-            item = CollectionGame(
-                game=details,
-                personal_rating=rating_value,
-                is_owned=(add_as == "owned"),
-                is_wishlist=(add_as == "wishlist"),
-            )
             if dry_run:
                 click.echo(f"[dry-run] Would add: {details.name}")
                 return
-            store.upsert(item)
+
+            svc_add_game(
+                collection_path,
+                details,
+                owned=(add_as == "owned"),
+                wishlist=(add_as == "wishlist"),
+                rating=rating_value,
+            )
             click.echo(f"Added: {details.name}")
             return
 
