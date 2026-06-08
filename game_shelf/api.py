@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from game_shelf.frontend import _game_payload, _palette_for_id, _status_label
+from game_shelf.frontend import _game_payload, render_interactive_html
 from game_shelf.models import CollectionGame, GameDetails
 from game_shelf.services import (
     add_game as svc_add_game,
@@ -169,6 +168,15 @@ def create_app(collection_path: Path) -> FastAPI:
     app = FastAPI(title="Game Shelf API", version="0.1.0")
 
     # ------------------------------------------------------------------
+    # Interactive frontend
+    # ------------------------------------------------------------------
+
+    @app.get("/", response_class=HTMLResponse)
+    def index():
+        """Serve the interactive frontend."""
+        return HTMLResponse(content=render_interactive_html())
+
+    # ------------------------------------------------------------------
     # Collection CRUD
     # ------------------------------------------------------------------
 
@@ -258,7 +266,6 @@ def create_app(collection_path: Path) -> FastAPI:
     @app.post("/api/bgg/search", response_model=list[BggSearchResult])
     def bgg_search(body: BggSearchRequest):
         """Search BGG by game name."""
-        load_dotenv()
         results = svc_search_games(body.query, limit=body.limit)
         return [_to_bgg_search_result(r) for r in results]
 
@@ -269,7 +276,6 @@ def create_app(collection_path: Path) -> FastAPI:
     @app.post("/api/metadata/preview", response_model=list[MetadataPreviewResponse])
     def metadata_preview():
         """Preview BGG metadata changes without applying them."""
-        load_dotenv()
         preview = preview_metadata_updates(collection_path)
         result: list[MetadataPreviewResponse] = []
         for item, diffs in preview.changed_games:
@@ -287,7 +293,6 @@ def create_app(collection_path: Path) -> FastAPI:
     @app.post("/api/metadata/refresh", response_model=MetadataRefreshResponse)
     def metadata_refresh():
         """Fetch fresh BGG metadata for BGG-sourced games and apply changes."""
-        load_dotenv()
         result = apply_metadata_updates(collection_path)
         return MetadataRefreshResponse(updated_count=len(result.changed_games))
 
